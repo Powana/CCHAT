@@ -28,15 +28,15 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 
 % Join channel
 handle(St, {join, Channel}) ->
-    % TODO: Implement this function
-    % {reply, ok, St} ;
-    {reply, {error, not_implemented, "join not implemented"}, St} ;
+    St#client_st.server ! {join, Channel, St#client_st.nick},
+    {reply, ok, St}; % TODO: Make sure everything actually is OK
 
 % Leave channel
 handle(St, {leave, Channel}) ->
     % TODO: Implement this function
-    % {reply, ok, St} ;
-    {reply, {error, not_implemented, "leave not implemented"}, St} ;
+    St#client_st.server ! {leave, Channel, St#client_st.nick},
+    {reply, ok, St} ;
+
 
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
