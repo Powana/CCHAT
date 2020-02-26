@@ -35,14 +35,12 @@ handle(St, {join, Channel}) ->
 
 % Leave channel
 handle(St, {leave, Channel}) ->
-    % TODO: Implement this function
-    St#client_st.server ! {leave, Channel, St#client_st.nick},
+    St#client_st.server ! {leave, Channel, self()},
     {reply, ok, St} ;
 
 
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
-
     {St#client_st.server, node()} ! {message_send, Channel, Msg, self()},
     {reply, ok, St} ;
 
@@ -61,6 +59,7 @@ handle(St, whoami) ->
 
 % Incoming message (from channel, to GUI)
 handle(St = #client_st{gui = GUI}, {message_receive, Channel, Nick, Msg}) ->
+    io:fwrite(Msg),
     gen_server:call(GUI, {message_receive, Channel, Nick++"> "++Msg}),
     {reply, ok, St} ;
 

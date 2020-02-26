@@ -1,7 +1,7 @@
 -module(server).
 -export([start/1,stop/1,messageHandler/1, channel/2] ).
 
-sendMessage(Data, []) -> ok;
+sendMessage(_, []) -> ok;
 sendMessage(Data, [H|T]) ->
 
     genserver:request(H, Data),
@@ -20,9 +20,15 @@ channel(Name, Users) ->
 
             channel(Name, NewUsers);
 
-        {leave, Nick} ->
-            io:format("Username left: ~n"),
-            channel(Name, Users);
+        {leave, UsrPID} ->
+            NewUsers = Users -- [UsrPID],
+
+            UserNick = genserver:request(UsrPID, whoami),
+            JoinMsg = io_lib:format("~p has left the channel.", [UserNick]),
+            Data = {message_receive, Name, "System", JoinMsg},
+            sendMessage(Data, Users),
+
+            channel(Name, NewUsers);
 
         {sndMsg, Msg, User} ->
 
@@ -55,9 +61,9 @@ messageHandler(Channels) ->
             messageHandler(Channels);
 
 
-        {leave, ChannelName, Nick} ->
-            ChannelPID = ets:lookup(Channels, ChannelName),
-            ChannelPID ! {leave, Nick},
+        {leave, ChannelName, User} ->
+            [{_, ChannelPID}] = ets:lookup(Channels, ChannelName),
+            ChannelPID ! {leave, User},
             messageHandler(Channels);
 
 
@@ -65,14 +71,6 @@ messageHandler(Channels) ->
             [{_, ChannelPID}] = ets:lookup(Channels, ChannelName), % todo maybe check for error
             ChannelPID ! {sndMsg, Msg, User},
             messageHandler(Channels)
-
-
-
-%%        {nick, NewNick} ->
-%%            ;
-%%        {leave, whoami} ->
-%%            ;
-%%        {leave, quit} ->
 
     end.
 
@@ -93,6 +91,6 @@ start(ServerAtom) ->
 % Stop the server process registered to the given name,
 % together with any other associated processes
 stop(ServerAtom) ->
-    % TODO Implement function
-    % Return ok
-    not_implemented.
+    exit(whereis(ServerAtom)),
+    catch(unregister(ServerAtom)),
+    ok.
