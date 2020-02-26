@@ -28,7 +28,9 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 
 % Join channel
 handle(St, {join, Channel}) ->
-    St#client_st.server ! {join, Channel, St#client_st.nick},
+    io:format("STATE SERVER INCOMING: "),
+    io:format(St#client_st.server),
+    {St#client_st.server, node()} ! {join, Channel, self()},
     {reply, ok, St}; % TODO: Make sure everything actually is OK
 
 % Leave channel
@@ -40,9 +42,9 @@ handle(St, {leave, Channel}) ->
 
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
-    % TODO: Implement this function
-    % {reply, ok, St} ;
-    {reply, {error, not_implemented, "message sending not implemented"}, St} ;
+
+    {St#client_st.server, node()} ! {message_send, Channel, Msg, self()},
+    {reply, ok, St} ;
 
 % This case is only relevant for the distinction assignment!
 % Change nick (no check, local only)

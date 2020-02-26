@@ -1,56 +1,73 @@
 -module(server).
--export([start/1,stop/1,messageHandler/0]).
+-export([start/1,stop/1,messageHandler/1, channel/2] ).
 
--record(server_st, {
-    channels
-}).
+sendMessage(Data, []) -> ok;
+sendMessage(Data, [H|T]) ->
 
-initialize_state() ->
-    #server_st{
-      channels = dict:new()
-    }.
+    genserver:request(H, Data),
+    sendMessage(Data, T).
 
-
-channel() ->
-    Users = [],
+channel(Name, Users) ->
 
     receive
-        {join, Nick} ->
-            lists:append(Nick, Users),
-            io:format("Username joined: ~n", Nick);
+        {join, UsrPID} ->
+            NewUsers = lists:append(Users, [UsrPID]),
+
+            UserNick = genserver:request(UsrPID, whoami),
+            JoinMsg = io_lib:format("~p has joined the fray.", [UserNick]),
+            Data = {message_receive, Name, "System", JoinMsg},
+            sendMessage(Data, Users),
+
+            channel(Name, NewUsers);
+
         {leave, Nick} ->
-            io:format("Username left: ~n", Nick)
+            io:format("Username left: ~n"),
+            channel(Name, Users);
+
+        {sndMsg, Msg, User} ->
+
+            UserNick = genserver:request(User, whoami),
+            Data = {message_receive, Name, UserNick, Msg},
+
+            sendMessage(Data, Users),
+            channel(Name, Users)
+
     end.
 
-messageHandler() ->
-    io:fwrite("Startdwadawding server"),
-
+messageHandler(Channels) ->
     receive
-        hellottw ->
-            io:fwrite("Hello World uwu");
-        {join, ChannelName, Nick} ->
-            ChannelExists = dict:is_key(ChannelName, #server_st.channels),
+        {join, ChannelName, UsrPID} ->
+            FoundChannels = length(ets:lookup(Channels, ChannelName)),
             if
-                % Channel does not already exist
-                not ChannelExists ->
-                    io:fwrite("New Channel"),
-                    NewChannelPID = spawn(server, channel, []),
-                    NewChannelsDict = dict:store(ChannelName, NewChannelPID, #server_st.channels),
+            % Channel does not already exist
+                FoundChannels == 0 ->
+                    io:format("Did not find channel, adding new channel"),
+                    Users = [],
+                    NewChannelPID = spawn(server, channel, [ChannelName, Users]),
+                    ets:insert(Channels, {ChannelName, NewChannelPID}); % Could add users as a list in the tuple.
 
+                true ->
+                    io:fwrite("FOUND CHANNEL YAY")
             end,
 
-            ChannelPID = dict:find(ChannelName, ChannelNameDict),
-            io:format("PID_INCOMING: "),
-            io:format(ChannelPID),
-            ChannelPID ! {join, Nick};
+            [{_, ChannelPID}] = ets:lookup(Channels, ChannelName),
+            ChannelPID ! {join, UsrPID},
+            messageHandler(Channels);
 
 
         {leave, ChannelName, Nick} ->
-            ChannelPID = dict:find(ChannelName, ChannelNameDict),
-            ChannelPID ! {leave, Nick}
+            ChannelPID = ets:lookup(Channels, ChannelName),
+            ChannelPID ! {leave, Nick},
+            messageHandler(Channels);
 
-%%        {message_send, ChannelName, Msg} ->
-%%            ;
+
+        {message_send, ChannelName, Msg, User} ->
+            [{_, ChannelPID}] = ets:lookup(Channels, ChannelName), % todo maybe check for error
+            ChannelPID ! {sndMsg, Msg, User},
+            messageHandler(Channels)
+
+
+
 %%        {nick, NewNick} ->
 %%            ;
 %%        {leave, whoami} ->
@@ -67,8 +84,8 @@ start(ServerAtom) ->
     % - Spawn a new process which waits for a message, handles it, then loops infinitely
     % - Register this process to ServerAtom
     % - Return the process ID
-    initialize_state(),
-    SrvPID = spawn(server, messageHandler, []),
+    Channels = ets:new(c, [set, public]),
+    SrvPID = spawn(server, messageHandler, [Channels]),
     register(ServerAtom, SrvPID),
     SrvPID.
 
