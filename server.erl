@@ -1,11 +1,15 @@
 -module(server).
 -export([start/1,stop/1,messageHandler/1, channel/2] ).
 
-sendMessage(_, []) -> ok;
-sendMessage(Data, [H|T]) ->
-
-    genserver:request(H, Data),
-    sendMessage(Data, T).
+sendMessage(_, _, []) -> ok;
+sendMessage(Data, User, [H|T]) ->
+    if
+      H == User -> % Dont send message to sender
+        sendMessage(Data, User, T);
+      true ->
+        genserver:request(H, Data),
+        sendMessage(Data, User, T)
+    end.
 
 channel(Name, Users) ->
 
@@ -16,7 +20,7 @@ channel(Name, Users) ->
             UserNick = genserver:request(UsrPID, whoami),
             JoinMsg = io_lib:format("~p has joined the fray.", [UserNick]),
             Data = {message_receive, Name, "System", JoinMsg},
-            sendMessage(Data, Users),
+            sendMessage(Data, 0, Users),
 
             channel(Name, NewUsers);
 
@@ -26,7 +30,7 @@ channel(Name, Users) ->
             UserNick = genserver:request(UsrPID, whoami),
             JoinMsg = io_lib:format("~p has left the channel.", [UserNick]),
             Data = {message_receive, Name, "System", JoinMsg},
-            sendMessage(Data, Users),
+            sendMessage(Data, 0, Users),
 
             channel(Name, NewUsers);
 
@@ -35,7 +39,7 @@ channel(Name, Users) ->
             UserNick = genserver:request(User, whoami),
             Data = {message_receive, Name, UserNick, Msg},
 
-            sendMessage(Data, Users),
+            sendMessage(Data, User, Users),
             channel(Name, Users)
 
     end.
@@ -53,7 +57,7 @@ messageHandler(Channels) ->
                     ets:insert(Channels, {ChannelName, NewChannelPID}); % Could add users as a list in the tuple.
 
                 true ->
-                    io:fwrite("FOUND CHANNEL YAY")
+                    io:fwrite("FOUND CHANNEL")
             end,
 
             [{_, ChannelPID}] = ets:lookup(Channels, ChannelName),
@@ -78,7 +82,6 @@ messageHandler(Channels) ->
 % Start a new server process with the given name
 % Do not change the signature of this function.
 start(ServerAtom) ->
-    % TODO Implement function
     % - Spawn a new process which waits for a message, handles it, then loops infinitely
     % - Register this process to ServerAtom
     % - Return the process ID
