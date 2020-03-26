@@ -28,10 +28,17 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 
 % Join channel
 handle(St, {join, Channel}) ->
-    io:format("STATE SERVER INCOMING: "),
-    io:format(St#client_st.server),
     {St#client_st.server, node()} ! {join, Channel, self()},
-    {reply, ok, St}; % TODO: Make sure everything actually is OK
+    receive
+      {ok} ->
+        {reply, ok, St};
+      {user_already_joined} ->
+        {reply, {error,user_already_joined,"User already joined"}, St}
+
+    after
+      500 ->
+        {reply, {error,server_not_reached,"Server not reached"}, St}
+    end;
 
 % Leave channel
 handle(St, {leave, Channel}) ->
@@ -42,7 +49,13 @@ handle(St, {leave, Channel}) ->
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
     {St#client_st.server, node()} ! {message_send, Channel, Msg, self()},
-    {reply, ok, St} ;
+    receive
+      {ok} ->
+        {reply, ok, St} ;
+      {user_not_joined} ->
+        {reply, {error,user_not_joined,"User not joined channel"}, St}
+    end;
+
 
 % This case is only relevant for the distinction assignment!
 % Change nick (no check, local only)

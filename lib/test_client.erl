@@ -121,7 +121,7 @@ init(Name) ->
     ?assert(compile:file(server) =:= {ok,server}),
     init_header(Name),
     Pid = server:start(?SERVERATOM),
-    % putStrLn("server ~p", [Pid]),
+    putStrLn("server ~p", [Pid]),
     assert("server startup", is_pid(Pid)),
     Pid.
 
@@ -198,6 +198,7 @@ change_nick(ClientAtom, Nick) ->
 
 % Receive a specific message from dummy GUI
 receive_message(Channel, Nick, Message) ->
+
     receive
         {message_receive, From, Msg} ->
             assert("channel matches", From, Channel),
@@ -244,7 +245,6 @@ write_receive_test() ->
     {_Pid1, Nick1, ClientAtom1} = new_client(),
     join_channel(ClientAtom1, Channel),
 
-    % Client 2 with dummy GUI
     {_Pid2, _Nick2, ClientAtom2} = new_client_gui(),
     join_channel(ClientAtom2, Channel),
 
@@ -259,6 +259,7 @@ write_receive_test() ->
     leave_channel(ClientAtom2, Channel),
     send_message(ClientAtom1, Channel, Message),
     no_more_messages(),
+
 
     ok.
 
@@ -322,7 +323,9 @@ join_nonresponding_server_test() ->
     putStrLn("Wait a few seconds for timeout..."),
     {_Pid, _Nick, ClientAtom} = new_client(),
     Channel = "#channel",
+
     Result = request(ClientAtom, {join,Channel}),
+
     assert_error("joining channel with non-responsive server", Result, server_not_reached).
 
 % Joining when no server

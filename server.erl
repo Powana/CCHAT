@@ -1,6 +1,16 @@
 -module(server).
 -export([start/1,stop/1,messageHandler/1, channel/2] ).
 
+
+putStrLn(S) ->
+    case get(output) of
+        off -> ok ;
+        _   -> io:fwrite(user, <<"~s~n">>, [S])
+    end.
+
+putStrLn(S1, S2) ->
+    putStrLn(io_lib:format(S1, S2)).
+
 sendMessage(_, _, []) -> ok;
 sendMessage(Data, User, [H|T]) ->
     if
@@ -14,32 +24,45 @@ sendMessage(Data, User, [H|T]) ->
 channel(Name, Users) ->
 
     receive
-        {join, UsrPID} ->
-            NewUsers = lists:append(Users, [UsrPID]),
+        {join, UsrPID, From} ->
+            AlreadyJoined = lists:member(UsrPID, Users),
+            if
+              AlreadyJoined ->
+                From ! {user_already_joined},
+                channel(Name, Users);
+              true ->
+                NewUsers = lists:append(Users, [UsrPID]),
+                From ! {ok_join},
+                channel(Name, NewUsers)
+            end;
 
-            UserNick = genserver:request(UsrPID, whoami),
-            JoinMsg = io_lib:format("~p has joined the fray.", [UserNick]),
-            Data = {message_receive, Name, "System", JoinMsg},
-            sendMessage(Data, 0, Users),
-
-            channel(Name, NewUsers);
 
         {leave, UsrPID} ->
             NewUsers = Users -- [UsrPID],
 
-            UserNick = genserver:request(UsrPID, whoami),
-            JoinMsg = io_lib:format("~p has left the channel.", [UserNick]),
-            Data = {message_receive, Name, "System", JoinMsg},
-            sendMessage(Data, 0, Users),
 
             channel(Name, NewUsers);
 
-        {sndMsg, Msg, User} ->
+        {sndMsg, Msg, User, From} ->
+            AlreadyJoined = lists:member(User, Users),
+            putStrLn("AlreadyJoined = ~p", [AlreadyJoined]),
+            UserNick = genserver:request(User, whoami), %FuckYouuuuuuuu
 
-            UserNick = genserver:request(User, whoami),
-            Data = {message_receive, Name, UserNick, Msg},
+            if
+              AlreadyJoined == false ->
+                From ! {user_not_joined};
+              true ->
+                putStrLn("PEEPEE"),
+                putStrLn("POOPOO"),
 
-            sendMessage(Data, User, Users),
+                Data = {message_receive, Name, UserNick, Msg},
+                putStrLn("POOPOO"),
+
+                sendMessage(Data, User, Users),
+                putStrLn("POOPOO"),
+                From ! {ok}
+            end,
+
             channel(Name, Users)
 
     end.
@@ -51,17 +74,22 @@ messageHandler(Channels) ->
             if
             % Channel does not already exist
                 FoundChannels == 0 ->
-                    io:format("Did not find channel, adding new channel"),
                     Users = [],
                     NewChannelPID = spawn(server, channel, [ChannelName, Users]),
                     ets:insert(Channels, {ChannelName, NewChannelPID}); % Could add users as a list in the tuple.
 
                 true ->
-                    io:fwrite("FOUND CHANNEL")
+                    pass
             end,
 
             [{_, ChannelPID}] = ets:lookup(Channels, ChannelName),
-            ChannelPID ! {join, UsrPID},
+            ChannelPID ! {join, UsrPID, self()},
+            receive
+              {ok_join} ->
+                UsrPID ! {ok};
+              {user_already_joined} ->
+                UsrPID ! {user_already_joined}
+            end,
             messageHandler(Channels);
 
 
@@ -73,7 +101,17 @@ messageHandler(Channels) ->
 
         {message_send, ChannelName, Msg, User} ->
             [{_, ChannelPID}] = ets:lookup(Channels, ChannelName), % todo maybe check for error
-            ChannelPID ! {sndMsg, Msg, User},
+            ChannelPID ! {sndMsg, Msg, User, self()},
+            putStrLn("SFJESIOFJIOJ"),
+            receive
+              {ok} ->
+                putStrLn("OOOKK"),
+                User ! {ok};
+              {user_not_joined} ->
+                putStrLn("USERNOTJOIIINED"),
+                User ! {user_not_joined}
+            end,
+            putStrLn("HELLOFUCKFACE"),
             messageHandler(Channels)
 
     end.
@@ -87,6 +125,8 @@ start(ServerAtom) ->
     % - Return the process ID
     Channels = ets:new(c, [set, public]),
     SrvPID = spawn(server, messageHandler, [Channels]),
+    %io_lib:format("~p is ServerAtom, ~p is SrvPid.", [ServerAtom, SrvPID]),
+    catch(unregister(ServerAtom)),
     register(ServerAtom, SrvPID),
     SrvPID.
 
@@ -94,6 +134,6 @@ start(ServerAtom) ->
 % Stop the server process registered to the given name,
 % together with any other associated processes
 stop(ServerAtom) ->
-    exit(whereis(ServerAtom)),
+    exit(whereis(ServerAtom), ok),
     catch(unregister(ServerAtom)),
     ok.
