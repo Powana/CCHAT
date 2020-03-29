@@ -6,7 +6,8 @@
 -record(client_st, {
     gui, % atom of the GUI process
     nick, % nick/username of the client
-    server % atom of the chat server
+    server, % atom of the chat server
+    channels
 }).
 
 % Return an initial state record. This is called from GUI.
@@ -15,7 +16,8 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
     #client_st{
         gui = GUIAtom,
         nick = Nick,
-        server = ServerAtom
+        server = ServerAtom,
+        channels = null
     }.
 
 % handle/2 handles each kind of request from GUI
@@ -30,8 +32,8 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 handle(St, {join, Channel}) ->
     {St#client_st.server, node()} ! {join, Channel, St#client_st.nick, self()},
     receive
-      {ok} ->
-        {reply, ok, St};
+      {ok, Channels} ->
+        {reply, ok, St#client_st{channels=Channels}};
       {user_already_joined} ->
         {reply, {error,user_already_joined,"User already joined"}, St}
 
@@ -42,31 +44,61 @@ handle(St, {join, Channel}) ->
 
 % Leave channel
 handle(St, {leave, Channel}) ->
-    {St#client_st.server, node()} ! {leave, Channel, self()},
+  if
+    St#client_st.channels == null ->
+        {reply, {error,user_not_joined,"User not joined channel"}, St};
+      true ->
+        LookupResult = ets:lookup(St#client_st.channels, Channel),
+        if
+          LookupResult == [] ->
+            {reply, {error,user_not_joined,"User not joined channel"}, St};
+          true ->
+            [{_, LeaveChannel}] = LookupResult,
+            LeaveChannel ! {leave, self()},
+            %{St#client_st.server, node()} ! {leave, Channel, self()},
 
-    receive
-      {ok} ->
-        {reply, ok, St};
-      {user_not_joined} ->
-        {reply, {error,user_not_joined,"User not joined channel"}, St}
-    after
-      3000 ->
-        {reply, {error,server_not_reached,"Server not reached"}, St}
+            receive
+              {ok} ->
+                {reply, ok, St};
+              {user_not_joined} ->
+                {reply, {error,user_not_joined,"User not joined channel"}, St}
+            after
+              3000 ->
+                {reply, {error,server_not_reached,"Server not reached"}, St}
+            end
+        end
     end;
 
 
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
-    Nick = St#client_st.nick,
-    {St#client_st.server, node()} ! {message_send, Channel, Msg, Nick, self()},
-    receive
-      {ok} ->
-        {reply, ok, St} ;
-      {user_not_joined} ->
-        {reply, {error,user_not_joined,"User not joined channel"}, St};
-      {server_not_reached} ->
-        {reply, {error,server_not_reached,"Server not reached"}, St}
-    end;
+  {St#client_st.server, node()} ! {get_channels, self()},
+  receive
+    {C} ->
+      Channels = C
+  after
+    900 ->
+      Channels = St#client_st.channels
+  end,
+
+  LookupResult = ets:lookup(Channels, Channel),
+  if
+    LookupResult == [] ->
+      {reply,{error,server_not_reached,"Server not reached"} , St#client_st{channels=Channels}};
+    true ->
+      [{_, MsgChannel}] = LookupResult,
+      Nick = St#client_st.nick,
+      MsgChannel ! {sndMsg, Msg, self(), Nick},
+      receive
+        {ok} ->
+          {reply, ok, St} ;
+        {user_not_joined} ->
+          {reply, {error,user_not_joined,"User not joined channel"}, St#client_st{channels=Channels}}
+      after
+        3000 ->
+          {reply,{error,server_not_reached,"Server not reached"} , St#client_st{channels=Channels}}
+      end
+  end;
 
 
 % This case is only relevant for the distinction assignment!

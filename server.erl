@@ -1,7 +1,6 @@
 -module(server).
 -export([start/1,stop/1,messageHandler/2, channel/2, sendMessage/3] ).
 
-
 sendMessage(_, _, []) -> exit(self());
 sendMessage(Data, User, [H|T]) ->
     if
@@ -28,30 +27,30 @@ channel(Name, Users) ->
             end;
 
 
-        {leave, UsrPID, From} ->
+        {leave, UsrPID} ->
             AlreadyJoined = lists:member(UsrPID, Users),
             if
               AlreadyJoined == false ->
-                From ! {user_not_joined},
+                UsrPID ! {user_not_joined},
                 channel(Name, Users);
               true ->
                 NewUsers = Users -- [UsrPID],
-                From ! {ok},
+                UsrPID ! {ok},
                 channel(Name, NewUsers)
             end;
 
 
-        {sndMsg, Msg, User, Nick, From} ->
+        {sndMsg, Msg, User, Nick} ->
             AlreadyJoined = lists:member(User, Users),
 
             if
               AlreadyJoined == false ->
-                From ! {user_not_joined};
+                User ! {user_not_joined};
               true ->
                 Data = {message_receive, Name, Nick, Msg},
 
                 spawn(server, sendMessage, [Data, User, Users]),
-                From ! {ok}
+                User ! {ok}
             end,
             channel(Name, Users)
 
@@ -85,45 +84,11 @@ messageHandler(Channels, Nicks) ->
             ChannelPID ! {join, UsrPID, self()},
             receive
               {ok_join} ->
-                UsrPID ! {ok};
+                UsrPID ! {ok, Channels};
               {user_already_joined} ->
                 UsrPID ! {user_already_joined}
             end,
             messageHandler(Channels, NewNicks);
-
-        {leave, ChannelName, User} ->
-            LookupResult = ets:lookup(Channels, ChannelName),
-            if
-              LookupResult == [] -> % Channel does not exist
-                User ! {server_not_reached};
-              true ->
-                [{_, ChannelPID}] = LookupResult,
-                ChannelPID ! {leave, User, self()},
-                receive
-                  {ok} ->
-                    User ! {ok};
-                  {user_not_joined} ->
-                    User ! {user_not_joined}
-                end
-            end,
-            messageHandler(Channels, Nicks);
-
-        {message_send, ChannelName, Msg, Nick, User} ->
-            LookupResult = ets:lookup(Channels, ChannelName),
-            if
-              LookupResult == [] -> % Channel does not exist
-                User ! {server_not_reached};
-              true ->
-                [{_, ChannelPID}] = LookupResult,
-                ChannelPID ! {sndMsg, Msg, User, Nick, self()},
-                receive
-                  {ok} ->
-                    User ! {ok};
-                  {user_not_joined} ->
-                    User ! {user_not_joined}
-                end
-            end,
-            messageHandler(Channels, Nicks);
 
         {check_nick, Nick, OldNick, From} ->
             NickTaken = lists:member(Nick, Nicks),
@@ -136,11 +101,20 @@ messageHandler(Channels, Nicks) ->
                 NewNicks = NewNicksTemp -- [OldNick],
                 From ! {ok},
                 messageHandler(Channels, NewNicks)
-            end
+            end;
+        {get_channels, From} ->
+          From ! {Channels},
+          messageHandler(Channels, Nicks);
 
+        {stop_channels, From} ->
+          lists:foreach(fun stop_channel/1, ets:tab2list(Channels)),
+          From ! {ok},
+          messageHandler(Channels, Nicks)
     end.
 
-
+stop_channel(ChannelTuple) ->
+  {_, PID} = ChannelTuple,
+  exit(PID, kill).
 
 % Start a new server process with the given name
 % Do not change the signature of this function.
@@ -159,6 +133,10 @@ start(ServerAtom) ->
 % Stop the server process registered to the given name,
 % together with any other associated processes
 stop(ServerAtom) ->
-    exit(whereis(ServerAtom), ok),
-    catch(unregister(ServerAtom)),
+    ServerAtom ! {stop_channels, self()},
+    receive
+      {ok} ->
+        exit(whereis(ServerAtom), ok),
+        catch(unregister(ServerAtom))
+    end,
     ok.
