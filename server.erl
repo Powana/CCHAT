@@ -1,17 +1,8 @@
 -module(server).
--export([start/1,stop/1,messageHandler/1, channel/2] ).
+-export([start/1,stop/1,messageHandler/2, channel/2, sendMessage/3] ).
 
 
-putStrLn(S) ->
-    case get(output) of
-        off -> ok ;
-        _   -> io:fwrite(user, <<"~s~n">>, [S])
-    end.
-
-putStrLn(S1, S2) ->
-    putStrLn(io_lib:format(S1, S2)).
-
-sendMessage(_, _, []) -> ok;
+sendMessage(_, _, []) -> exit(self());
 sendMessage(Data, User, [H|T]) ->
     if
       H == User -> % Dont send message to sender
@@ -37,39 +28,47 @@ channel(Name, Users) ->
             end;
 
 
-        {leave, UsrPID} ->
-            NewUsers = Users -- [UsrPID],
+        {leave, UsrPID, From} ->
+            AlreadyJoined = lists:member(UsrPID, Users),
+            if
+              AlreadyJoined == false ->
+                From ! {user_not_joined},
+                channel(Name, Users);
+              true ->
+                NewUsers = Users -- [UsrPID],
+                From ! {ok},
+                channel(Name, NewUsers)
+            end;
 
 
-            channel(Name, NewUsers);
-
-        {sndMsg, Msg, User, From} ->
+        {sndMsg, Msg, User, Nick, From} ->
             AlreadyJoined = lists:member(User, Users),
-            putStrLn("AlreadyJoined = ~p", [AlreadyJoined]),
-            UserNick = genserver:request(User, whoami), %FuckYouuuuuuuu
 
             if
               AlreadyJoined == false ->
                 From ! {user_not_joined};
               true ->
-                putStrLn("PEEPEE"),
-                putStrLn("POOPOO"),
+                Data = {message_receive, Name, Nick, Msg},
 
-                Data = {message_receive, Name, UserNick, Msg},
-                putStrLn("POOPOO"),
-
-                sendMessage(Data, User, Users),
-                putStrLn("POOPOO"),
+                spawn(server, sendMessage, [Data, User, Users]),
                 From ! {ok}
             end,
-
             channel(Name, Users)
 
     end.
 
-messageHandler(Channels) ->
+messageHandler(Channels, Nicks) ->
     receive
-        {join, ChannelName, UsrPID} ->
+        {join, ChannelName, Nick, UsrPID} ->
+            % New user with new nick joining check
+            NickAdded = lists:member(Nick, Nicks),
+            if
+              NickAdded ->
+                NewNicks = Nicks;
+              true ->
+                NewNicks = lists:append(Nicks, [Nick])
+            end,
+
             FoundChannels = length(ets:lookup(Channels, ChannelName)),
             if
             % Channel does not already exist
@@ -90,31 +89,57 @@ messageHandler(Channels) ->
               {user_already_joined} ->
                 UsrPID ! {user_already_joined}
             end,
-            messageHandler(Channels);
-
+            messageHandler(Channels, NewNicks);
 
         {leave, ChannelName, User} ->
-            [{_, ChannelPID}] = ets:lookup(Channels, ChannelName),
-            ChannelPID ! {leave, User},
-            messageHandler(Channels);
-
-
-        {message_send, ChannelName, Msg, User} ->
-            [{_, ChannelPID}] = ets:lookup(Channels, ChannelName), % todo maybe check for error
-            ChannelPID ! {sndMsg, Msg, User, self()},
-            putStrLn("SFJESIOFJIOJ"),
-            receive
-              {ok} ->
-                putStrLn("OOOKK"),
-                User ! {ok};
-              {user_not_joined} ->
-                putStrLn("USERNOTJOIIINED"),
-                User ! {user_not_joined}
+            LookupResult = ets:lookup(Channels, ChannelName),
+            if
+              LookupResult == [] -> % Channel does not exist
+                User ! {server_not_reached};
+              true ->
+                [{_, ChannelPID}] = LookupResult,
+                ChannelPID ! {leave, User, self()},
+                receive
+                  {ok} ->
+                    User ! {ok};
+                  {user_not_joined} ->
+                    User ! {user_not_joined}
+                end
             end,
-            putStrLn("HELLOFUCKFACE"),
-            messageHandler(Channels)
+            messageHandler(Channels, Nicks);
+
+        {message_send, ChannelName, Msg, Nick, User} ->
+            LookupResult = ets:lookup(Channels, ChannelName),
+            if
+              LookupResult == [] -> % Channel does not exist
+                User ! {server_not_reached};
+              true ->
+                [{_, ChannelPID}] = LookupResult,
+                ChannelPID ! {sndMsg, Msg, User, Nick, self()},
+                receive
+                  {ok} ->
+                    User ! {ok};
+                  {user_not_joined} ->
+                    User ! {user_not_joined}
+                end
+            end,
+            messageHandler(Channels, Nicks);
+
+        {check_nick, Nick, OldNick, From} ->
+            NickTaken = lists:member(Nick, Nicks),
+            if
+              NickTaken ->
+                From ! {nick_taken},
+                messageHandler(Channels, Nicks);
+              true ->
+                NewNicksTemp = lists:append(Nicks, [Nick]),
+                NewNicks = NewNicksTemp -- [OldNick],
+                From ! {ok},
+                messageHandler(Channels, NewNicks)
+            end
 
     end.
+
 
 
 % Start a new server process with the given name
@@ -124,7 +149,7 @@ start(ServerAtom) ->
     % - Register this process to ServerAtom
     % - Return the process ID
     Channels = ets:new(c, [set, public]),
-    SrvPID = spawn(server, messageHandler, [Channels]),
+    SrvPID = spawn(server, messageHandler, [Channels, []]),
     %io_lib:format("~p is ServerAtom, ~p is SrvPid.", [ServerAtom, SrvPID]),
     catch(unregister(ServerAtom)),
     register(ServerAtom, SrvPID),

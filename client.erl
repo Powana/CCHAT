@@ -28,7 +28,7 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 
 % Join channel
 handle(St, {join, Channel}) ->
-    {St#client_st.server, node()} ! {join, Channel, self()},
+    {St#client_st.server, node()} ! {join, Channel, St#client_st.nick, self()},
     receive
       {ok} ->
         {reply, ok, St};
@@ -36,31 +36,50 @@ handle(St, {join, Channel}) ->
         {reply, {error,user_already_joined,"User already joined"}, St}
 
     after
-      500 ->
+      3000 ->
         {reply, {error,server_not_reached,"Server not reached"}, St}
     end;
 
 % Leave channel
 handle(St, {leave, Channel}) ->
-    St#client_st.server ! {leave, Channel, self()},
-    {reply, ok, St} ;
+    {St#client_st.server, node()} ! {leave, Channel, self()},
+
+    receive
+      {ok} ->
+        {reply, ok, St};
+      {user_not_joined} ->
+        {reply, {error,user_not_joined,"User not joined channel"}, St}
+    after
+      3000 ->
+        {reply, {error,server_not_reached,"Server not reached"}, St}
+    end;
 
 
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
-    {St#client_st.server, node()} ! {message_send, Channel, Msg, self()},
+    Nick = St#client_st.nick,
+    {St#client_st.server, node()} ! {message_send, Channel, Msg, Nick, self()},
     receive
       {ok} ->
         {reply, ok, St} ;
       {user_not_joined} ->
-        {reply, {error,user_not_joined,"User not joined channel"}, St}
+        {reply, {error,user_not_joined,"User not joined channel"}, St};
+      {server_not_reached} ->
+        {reply, {error,server_not_reached,"Server not reached"}, St}
     end;
 
 
 % This case is only relevant for the distinction assignment!
 % Change nick (no check, local only)
 handle(St, {nick, NewNick}) ->
-    {reply, ok, St#client_st{nick = NewNick}} ;
+    {St#client_st.server, node()} ! {check_nick, NewNick, St#client_st.nick, self()},
+    receive
+      {ok} ->
+        {reply, ok, St#client_st{nick = NewNick}} ;
+      {nick_taken} ->
+        {reply, {error, nick_taken, "Nick taken"}, St}
+    end;
+
 
 % ---------------------------------------------------------------------------
 % The cases below do not need to be changed...
