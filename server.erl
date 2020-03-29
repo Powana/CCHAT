@@ -48,8 +48,7 @@ channel(Name, Users) ->
                 User ! {user_not_joined};
               true ->
                 Data = {message_receive, Name, Nick, Msg},
-
-                spawn(server, sendMessage, [Data, User, Users]),
+                spawn(server, sendMessage, [Data, User, Users]), % Each message gets it's own process to ensure no blockage
                 User ! {ok}
             end,
             channel(Name, Users)
@@ -59,12 +58,11 @@ channel(Name, Users) ->
 messageHandler(Channels, Nicks) ->
     receive
         {join, ChannelName, Nick, UsrPID} ->
-            % New user with new nick joining check
             NickAdded = lists:member(Nick, Nicks),
             if
               NickAdded ->
                 NewNicks = Nicks;
-              true ->
+              true -> % New user with generated nick added to list of current nicks
                 NewNicks = lists:append(Nicks, [Nick])
             end,
 
@@ -74,7 +72,7 @@ messageHandler(Channels, Nicks) ->
                 FoundChannels == 0 ->
                     Users = [],
                     NewChannelPID = spawn(server, channel, [ChannelName, Users]),
-                    ets:insert(Channels, {ChannelName, NewChannelPID}); % Could add users as a list in the tuple.
+                    ets:insert(Channels, {ChannelName, NewChannelPID});
 
                 true ->
                     pass
@@ -96,13 +94,14 @@ messageHandler(Channels, Nicks) ->
               NickTaken ->
                 From ! {nick_taken},
                 messageHandler(Channels, Nicks);
-              true ->
+              true -> % Nick is not taken, update list of current nicks
                 NewNicksTemp = lists:append(Nicks, [Nick]),
                 NewNicks = NewNicksTemp -- [OldNick],
                 From ! {ok},
                 messageHandler(Channels, NewNicks)
             end;
-        {get_channels, From} ->
+
+        {get_channels, From} -> % Simple getter for the Channels ets
           From ! {Channels},
           messageHandler(Channels, Nicks);
 
@@ -122,9 +121,8 @@ start(ServerAtom) ->
     % - Spawn a new process which waits for a message, handles it, then loops infinitely
     % - Register this process to ServerAtom
     % - Return the process ID
-    Channels = ets:new(c, [set, public]),
+    Channels = ets:new(c, [set, public]), % A lookup table between Names and PIDs
     SrvPID = spawn(server, messageHandler, [Channels, []]),
-    %io_lib:format("~p is ServerAtom, ~p is SrvPid.", [ServerAtom, SrvPID]),
     catch(unregister(ServerAtom)),
     register(ServerAtom, SrvPID),
     SrvPID.
@@ -135,7 +133,7 @@ start(ServerAtom) ->
 stop(ServerAtom) ->
     ServerAtom ! {stop_channels, self()},
     receive
-      {ok} ->
+      {ok} -> % Wait for all channels to be stopped before stopping server
         exit(whereis(ServerAtom), ok),
         catch(unregister(ServerAtom))
     end,

@@ -32,7 +32,7 @@ initial_state(Nick, GUIAtom, ServerAtom) ->
 handle(St, {join, Channel}) ->
     {St#client_st.server, node()} ! {join, Channel, St#client_st.nick, self()},
     receive
-      {ok, Channels} ->
+      {ok, Channels} -> % Channels is the table of Name -> PID
         {reply, ok, St#client_st{channels=Channels}};
       {user_already_joined} ->
         {reply, {error,user_already_joined,"User already joined"}, St}
@@ -45,17 +45,16 @@ handle(St, {join, Channel}) ->
 % Leave channel
 handle(St, {leave, Channel}) ->
   if
-    St#client_st.channels == null ->
+    St#client_st.channels == null -> % User has never joined a channel
         {reply, {error,user_not_joined,"User not joined channel"}, St};
       true ->
         LookupResult = ets:lookup(St#client_st.channels, Channel),
         if
-          LookupResult == [] ->
+          LookupResult == [] -> % No matching channels
             {reply, {error,user_not_joined,"User not joined channel"}, St};
           true ->
             [{_, LeaveChannel}] = LookupResult,
             LeaveChannel ! {leave, self()},
-            %{St#client_st.server, node()} ! {leave, Channel, self()},
 
             receive
               {ok} ->
@@ -72,12 +71,12 @@ handle(St, {leave, Channel}) ->
 
 % Sending message (from GUI, to channel)
 handle(St, {message_send, Channel, Msg}) ->
-  {St#client_st.server, node()} ! {get_channels, self()},
+  {St#client_st.server, node()} ! {get_channels, self()}, % Update channels to ensure correct behaviour
   receive
     {C} ->
       Channels = C
   after
-    900 ->
+    900 -> % Default to previous channels if the server is stopped
       Channels = St#client_st.channels
   end,
 
@@ -102,7 +101,7 @@ handle(St, {message_send, Channel, Msg}) ->
 
 
 % This case is only relevant for the distinction assignment!
-% Change nick (no check, local only)
+% Change nick with server-side check
 handle(St, {nick, NewNick}) ->
     {St#client_st.server, node()} ! {check_nick, NewNick, St#client_st.nick, self()},
     receive
